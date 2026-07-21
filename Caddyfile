@@ -1,0 +1,8 @@
+# Production reverse proxy — terminates TLS (Let's Encrypt, auto-renewed)
+# and forwards to the backend over the compose network. WebSocket upgrade
+# (used by the relay's /connect endpoint) is forwarded automatically by
+# Caddy's reverse_proxy, no extra config needed.
+
+cycove.virdana.dev {
+	reverse_proxy backend:3000
+}

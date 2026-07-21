@@ -18,14 +18,17 @@ import { accountDataRoutes } from './routes/accountData.js';
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? '0.0.0.0';
 
-// trustProxy: 'loopback' — Tailscale Serve terminates TLS and proxies to this
-// server over 127.0.0.1, setting X-Forwarded-For with the real tailnet peer's
-// IP. Without this, request.ip is always 127.0.0.1 for every proxied request,
-// collapsing every real user into one bucket for IP-keyed rate limits. Scoped
-// to loopback specifically (not blanket trust) since HOST=0.0.0.0 means this
-// port is also reachable directly — a direct caller's forwarded header must
-// stay ignored, only the proxy's own connection is trusted.
-const app = Fastify({ logger: true, trustProxy: 'loopback' });
+// trustProxy defaults to 'loopback' for local dev (Tailscale Serve terminates
+// TLS and proxies over 127.0.0.1, setting X-Forwarded-For with the real
+// tailnet peer's IP). In production (docker-compose.prod.yml) it's overridden
+// via TRUST_PROXY to the compose network's pinned subnet, since Caddy proxies
+// over the internal Docker network there, not loopback. Either way, without
+// trusting the right source, request.ip collapses every real user into one
+// bucket for IP-keyed rate limits — and it's scoped narrowly (not blanket
+// `true`) since HOST=0.0.0.0 means this port is also reachable directly; a
+// direct caller's forwarded header must stay ignored, only the proxy's own
+// connection is trusted.
+const app = Fastify({ logger: true, trustProxy: process.env.TRUST_PROXY ?? 'loopback' });
 
 // Wide open for now — this is unexposed LAN-only local dev (see
 // Projects/CyCove.md -> Key decisions -> Hosting), not a public deployment.

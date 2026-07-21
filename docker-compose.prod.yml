@@ -1,9 +1,15 @@
 # Production stack for the Hetzner VPS. Postgres and Redis are not published
 # to the host at all — only reachable by the backend over the compose network
 # — since nothing outside this stack needs to talk to them directly. Backend
-# itself is bound to 127.0.0.1 only for now, until a reverse proxy + TLS is
-# in front of it (see roadmap in .claude/plan.md); not safe to expose on
-# 0.0.0.0 until then.
+# stays bound to 127.0.0.1 (handy for a direct curl from the server itself)
+# plus the internal compose network, which is how Caddy actually reaches it;
+# port 3000 itself is never exposed publicly, only Caddy's 80/443 are.
+#
+# The compose network gets a pinned subnet so the backend's Fastify
+# trustProxy setting (TRUST_PROXY in backend/.env) can trust exactly that
+# CIDR — Caddy is the only thing forwarding requests to the backend, so its
+# X-Forwarded-For needs to be trusted for rate-limiting to key on the real
+# client IP instead of Caddy's own container IP.
 #
 # Secrets (DB password, etc.) live in backend/.env on the server, gitignored,
 # never in this file.
@@ -39,6 +45,27 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
 volumes:
   cycove_postgres_data:
   cycove_redis_data:
+  caddy_data:
+  caddy_config:
