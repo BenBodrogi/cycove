@@ -1,8 +1,15 @@
 # Production reverse proxy — terminates TLS (Let's Encrypt, auto-renewed)
-# and forwards to the backend over the compose network. WebSocket upgrade
-# (used by the relay's /connect endpoint) is forwarded automatically by
-# Caddy's reverse_proxy, no extra config needed.
+# for both the web app and the API, on separate subdomains rather than
+# path-splitting one origin (matches how the web client already expects
+# NEXT_PUBLIC_API_BASE to be a full, separate origin — same pattern the
+# earlier Tailscale Serve dev setup used, just with real domains now).
+# WebSocket upgrade (the relay's /connect endpoint) is forwarded
+# automatically by Caddy's reverse_proxy, no extra config needed.
 
 cycove.virdana.dev {
+	reverse_proxy web:3000
+}
+
+api.cycove.virdana.dev {
 	reverse_proxy backend:3000
 }

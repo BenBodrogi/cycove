@@ -45,11 +45,20 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: https://api.cycove.virdana.dev
+    restart: unless-stopped
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
       - backend
+      - web
     ports:
       - "80:80"
       - "443:443"

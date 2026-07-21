@@ -30,9 +30,11 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 // connection is trusted.
 const app = Fastify({ logger: true, trustProxy: process.env.TRUST_PROXY ?? 'loopback' });
 
-// Wide open for now — this is unexposed LAN-only local dev (see
-// Projects/CyCove.md -> Key decisions -> Hosting), not a public deployment.
-// Revisit before anything is reachable outside the LAN.
+// origin: scoped to known web-client origins now that this is actually
+// public (was `true`/wide-open during LAN-only local dev — see
+// Projects/CyCove.md -> Key decisions -> Hosting — revisited now that it's
+// not). CORS_ORIGINS is comma-separated so a new environment (another dev's
+// machine, a staging domain) doesn't need a code change, just a new env var.
 // methods: @fastify/cors defaults to GET,HEAD,POST only — PUT needed once
 // /users/username and /account-data/contacts were added (real bug caught
 // live: the preflight succeeded but the browser silently refused to send
@@ -41,7 +43,8 @@ const app = Fastify({ logger: true, trustProxy: process.env.TRUST_PROXY ?? 'loop
 // is now the second time a new HTTP method got added to a route without
 // remembering to add it here too; worth treating "did I add the method to
 // CORS" as a standing checklist item for any future non-GET/POST route.
-await app.register(cors, { origin: true, methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE'] });
+const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3001').split(',');
+await app.register(cors, { origin: corsOrigins, methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE'] });
 await app.register(websocketPlugin);
 await app.register(registerRoutes);
 await app.register(loginRoutes);
