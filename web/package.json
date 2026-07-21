@@ -1,0 +1,26 @@
+{
+  "name": "@cycove/web",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CyCove Next.js web client. matrix-sdk-crypto-wasm for E2EE; server-side rendering never touches plaintext message content — the web client behaves as a static app talking directly to the backend API/WebSocket.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "^18.3.1",
+    "jsqr": "^1.4.0",
+    "next": "^15.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}

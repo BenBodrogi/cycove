@@ -1,0 +1,20 @@
+{
+  "name": "cycove",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CyCove — privacy-first E2EE messenger (Virdana). Monorepo for the backend relay and Next.js web client. Android is a separate repo (Kotlin, no code to share). See docs/ and the Virdana vault (Projects/CyCove.md) for architecture and decisions.",
+  "workspaces": [
+    "backend",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

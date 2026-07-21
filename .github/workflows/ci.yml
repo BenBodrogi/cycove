@@ -1,0 +1,50 @@
+name: CI
+
+# There's no deploy job yet: no VPS is provisioned and no Dockerfile exists.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  typecheck-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+
+  build-backend:
+    runs-on: ubuntu-latest
+    needs: typecheck-and-lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=backend
+
+  build-web:
+    runs-on: ubuntu-latest
+    needs: typecheck-and-lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=web
+
+  # deploy: intentionally omitted until a staging VPS is provisioned and a Dockerfile /
+  # docker-compose.yml exist. See .claude/plan.md Phase 0 for status.

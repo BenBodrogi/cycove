@@ -1,0 +1,225 @@
+asyncapi: 3.0.0
+info:
+  title: CyCove Realtime Relay
+  version: 0.2.0-draft
+  description: >
+    WebSocket contract for the CyCove relay's realtime channel (WS /connect),
+    formalizing the surface sketched in Projects/CyCove.md -> Architecture ->
+    Backend. Covers online delivery, delivery acknowledgment (which triggers
+    server-side content deletion — see Projects/CyCove.md -> Architecture ->
+    Crypto, Metadata Minimization), and the offline-queue flush on reconnect.
+
+    STATUS (2026-07-19): generalized from a ciphertext-only relay to a
+    generic to-device event relay (sendToDevice/toDeviceEvent, replacing
+    sendCiphertext/deliverCiphertext) once building safety-number
+    verification showed that verification-protocol messages
+    (m.key.verification.*) travel over the exact same wire mechanism as
+    encrypted chat messages (m.room.encrypted) — see
+    docs/crypto-integration-notes.md. The server still never inspects
+    `content`, regardless of `event_type`.
+
+servers:
+  production:
+    host: api.cycove.app
+    pathname: /v1/connect
+    protocol: wss
+    description: Placeholder — domain not yet registered, hosting not yet finalized.
+
+defaultContentType: application/json
+
+channels:
+  connect:
+    address: /v1/connect
+    description: >
+      Persistent per-device relay channel, one connection per online device.
+      No auth required to open the connection itself — the first message
+      sent must be an AuthMessage, or the server closes with code 4001.
+      This is deliberate: native browser WebSocket can't set custom headers,
+      and a token in the connection URL/query string is more likely to leak
+      into logs or browser history than one sent as the first frame.
+    messages:
+      auth:
+        $ref: '#/components/messages/AuthMessage'
+      toDeviceEvent:
+        $ref: '#/components/messages/ToDeviceEvent'
+      sendToDevice:
+        $ref: '#/components/messages/SendToDevice'
+      deliveryAck:
+        $ref: '#/components/messages/DeliveryAck'
+      queueFlush:
+        $ref: '#/components/messages/QueueFlush'
+      error:
+        $ref: '#/components/messages/ErrorMessage'
+
+operations:
+  authenticate:
+    action: send
+    channel:
+      $ref: '#/channels/connect'
+    summary: Must be the first message on every connection. Anything else sent first gets an ErrorMessage and a 4001 close.
+    messages:
+      - $ref: '#/channels/connect/messages/auth'
+  receiveToDeviceEvent:
+    action: receive
+    channel:
+      $ref: '#/channels/connect'
+    summary: >
+      Server pushes an event addressed to this device as it arrives, if the
+      device is connected when it's sent. Could be a real message
+      (event_type "m.room.encrypted") or a safety-number verification step
+      (event_type "m.key.verification.*") — same mechanism either way.
+    messages:
+      - $ref: '#/channels/connect/messages/toDeviceEvent'
+  sendToDevice:
+    action: send
+    channel:
+      $ref: '#/channels/connect'
+    summary: >
+      Client sends an event addressed to another device. Always persisted
+      to the to-device queue first (durability), then pushed live if the
+      recipient is connected — see backend/src/lib/relay.ts, shared with
+      the HTTP fallback (POST /messages, docs/api/openapi.yaml).
+    messages:
+      - $ref: '#/channels/connect/messages/sendToDevice'
+  acknowledgeDelivery:
+    action: send
+    channel:
+      $ref: '#/channels/connect'
+    summary: >
+      Client confirms receipt. Server deletes the queued row immediately on
+      ack — no server-side history retention by design. A device can only
+      ack events addressed to itself.
+    messages:
+      - $ref: '#/channels/connect/messages/deliveryAck'
+  flushQueue:
+    action: receive
+    channel:
+      $ref: '#/channels/connect'
+    summary: Sent immediately after successful auth — delivers any events queued while the device was offline.
+    messages:
+      - $ref: '#/channels/connect/messages/queueFlush'
+
+components:
+  messages:
+    AuthMessage:
+      name: auth
+      title: Authenticate the connection
+      payload:
+        type: object
+        required: [type, token]
+        properties:
+          type:
+            type: string
+            enum: [auth]
+          token:
+            type: string
+            description: The session_token returned by POST /register or POST /devices/link.
+
+    ToDeviceEvent:
+      name: toDeviceEvent
+      title: To-device event delivery
+      payload:
+        type: object
+        required: [type, message_id, sender_device_id, sender_user_id, event_type, content]
+        properties:
+          type:
+            type: string
+            enum: [toDeviceEvent]
+          message_id:
+            type: string
+          sender_device_id:
+            type: string
+          sender_user_id:
+            type: string
+            description: >
+              The recipient's OlmMachine.receiveSyncChanges needs the
+              sender's *user* ID, not just their device ID, since to-device
+              events are shaped {sender, type, content}. See
+              docs/crypto-integration-notes.md.
+          event_type:
+            type: string
+            description: >
+              "m.room.encrypted" for real messages/receipts/typing (content
+              is opaque ciphertext), "m.key.verification.*" for a
+              safety-number verification step, or "m.cycove.contact_accept"
+              /"m.cycove.contact_decline" (content is plain JSON in both
+              cases — never Olm-encrypted by design, same reasoning as
+              verification: nothing in these payloads is more sensitive
+              than what's already visible elsewhere. Note that
+              m.cycove.contact_request specifically does NOT travel this
+              channel at all — see POST /contacts/request in openapi.yaml
+              and docs/crypto-integration-notes.md for why sending needed
+              to move to a plain rate-limitable HTTP endpoint instead).
+          content:
+            type: object
+            description: Opaque either way. Server relays without inspecting.
+
+    SendToDevice:
+      name: sendToDevice
+      title: To-device event send
+      payload:
+        type: object
+        required: [type, recipient_device_id, event_type, content]
+        properties:
+          type:
+            type: string
+            enum: [sendToDevice]
+          recipient_device_id:
+            type: string
+          event_type:
+            type: string
+          content:
+            type: object
+
+    DeliveryAck:
+      name: deliveryAck
+      title: Delivery acknowledgment
+      payload:
+        type: object
+        required: [type, message_id]
+        properties:
+          type:
+            type: string
+            enum: [deliveryAck]
+          message_id:
+            type: string
+
+    QueueFlush:
+      name: queueFlush
+      title: Queued-event flush, sent right after successful auth
+      payload:
+        type: object
+        required: [type, messages]
+        properties:
+          type:
+            type: string
+            enum: [queueFlush]
+          messages:
+            type: array
+            items:
+              type: object
+              required: [message_id, sender_device_id, sender_user_id, event_type, content]
+              properties:
+                message_id:
+                  type: string
+                sender_device_id:
+                  type: string
+                sender_user_id:
+                  type: string
+                event_type:
+                  type: string
+                content:
+                  type: object
+
+    ErrorMessage:
+      name: error
+      title: Protocol error (malformed message, unauthenticated, unknown type)
+      payload:
+        type: object
+        required: [type, error]
+        properties:
+          type:
+            type: string
+            enum: [error]
+          error:
+            type: string

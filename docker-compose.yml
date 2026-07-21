@@ -1,0 +1,39 @@
+# Local dev environment — Postgres + Redis only. Run the backend itself with
+# `npm run dev --workspace=backend` on the same machine for fast hot-reload
+# iteration; see backend/Dockerfile for the production build target used on
+# the VPS.
+#
+# Runs on Windows via Docker Desktop (decided 2026-07-19) — since the backend
+# already runs on Windows, keeping Postgres/Redis there too avoids a network
+# hop, LAN IP management, and the DS223j's real constraints (1GB RAM, DSM
+# port conflicts). The NAS was the original plan but added friction with no
+# offsetting benefit once the backend wasn't also going to live there. See
+# Projects/CyCove.md -> Key decisions -> Hosting for the full reasoning.
+#
+# Docker Desktop needs to actually be installed on this machine first — it
+# wasn't as of 2026-07-19.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cycove
+      POSTGRES_PASSWORD: cycove_dev_only
+      POSTGRES_DB: cycove
+    ports:
+      - "5432:5432"
+    volumes:
+      - cycove_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - cycove_redis_data:/data
+
+volumes:
+  cycove_postgres_data:
+  cycove_redis_data:

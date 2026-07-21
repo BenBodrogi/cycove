@@ -1,0 +1,127 @@
+// CyCove backend data model.
+// Matches the draft in Projects/CyCove.md -> Architecture -> Backend (Virdana vault).
+// The server never stores private keys or plaintext — Json/Bytes fields here
+// hold opaque blobs (public key material shaped for matrix-sdk-crypto-wasm,
+// or ciphertext) that the server stores and serves without parsing. See
+// ../../THREAT_MODEL.md and ../../docs/crypto-integration-notes.md.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  // Hash only — the recovery key itself never reaches the server.
+  // See docs/ux-flows.md -> Recovery key UX.
+  recoveryKeyHash String
+
+  // Optional, unique, lowercase-only — a real discovery mechanism (type a
+  // username to add someone), not just the local-only label it started as.
+  // See docs/crypto-integration-notes.md for why this is a deliberate
+  // reversal of the original no-directory identity model.
+  username String? @unique
+
+  // Opaque cross-signing public key blobs (Matrix-shaped: user_id, usage,
+  // keys, signatures), one triplet per account, not per device. Server
+  // stores/serves verbatim — same pattern as Device.deviceKeys. See
+  // docs/crypto-integration-notes.md's cross-signing grounding section for
+  // why /keys/signatures/upload (unlike this) can't stay a pure pass-through.
+  masterKey      Json?
+  selfSigningKey Json?
+  userSigningKey Json?
+
+  devices Device[]
+  backups EncryptedBackup[]
+
+  @@map("users")
+}
+
+// Opaque client-encrypted backup blob — the server stores and serves
+// ciphertext it can't read, same pattern as everything else in this schema.
+// dataType distinguishes backup kinds sharing this table (only "contacts"
+// existed originally; "cross-signing" added alongside it — see
+// docs/crypto-integration-notes.md's cross-signing grounding section for why
+// this isn't built on matrix-sdk-crypto-wasm's Megolm room-key backup
+// feature).
+model EncryptedBackup {
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataType   String
+  ciphertext Bytes
+  iv         Bytes
+  updatedAt  DateTime @updatedAt
+
+  @@id([userId, dataType])
+  @@map("encrypted_backups")
+}
+
+model Device {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Opaque Matrix-shaped `device_keys` blob (self-signed identity keys),
+  // produced by the client's OlmMachine. The server never parses this —
+  // stores and serves it back verbatim on /keys/query. See
+  // docs/crypto-integration-notes.md.
+  deviceKeys Json
+
+  // Opaque FCM token for wake-signal pushes only — never carries message content.
+  pushToken  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  oneTimeKeys  OneTimeKey[]
+  queuedForMe  ToDeviceQueue[] @relation("RecipientDevice")
+  sentMessages ToDeviceQueue[] @relation("SenderDevice")
+
+  @@index([userId])
+  @@map("devices")
+}
+
+model OneTimeKey {
+  id       String @id @default(cuid())
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  // Matrix's own key identifier, e.g. "signed_curve25519:AAAAHQ" — unique
+  // per device. keyData is the opaque signed-key JSON. Consumed (claimed) at
+  // most once; client is responsible for replenishing via POST /keys/upload.
+  keyId      String
+  keyData    Json
+  consumedAt DateTime?
+
+  @@unique([deviceId, keyId])
+  @@index([deviceId])
+  @@map("one_time_keys")
+}
+
+// Generic to-device event queue — not just chat messages. Both encrypted
+// messages (event_type "m.room.encrypted", see Architecture -> Crypto) and
+// plain interactive-verification protocol messages (event_type
+// "m.key.verification.*", never Olm-encrypted by design — see
+// docs/crypto-integration-notes.md) flow through the same queue, since the
+// server treats content opaquely either way. Originally modeled as
+// "MessageQueue" carrying just ciphertext; generalized once verification
+// support revealed both kinds of event are the same ToDeviceRequest shape.
+model ToDeviceQueue {
+  id                String   @id @default(cuid())
+  senderDeviceId    String
+  senderDevice      Device   @relation("SenderDevice", fields: [senderDeviceId], references: [id], onDelete: Cascade)
+  recipientDeviceId String
+  recipientDevice   Device   @relation("RecipientDevice", fields: [recipientDeviceId], references: [id], onDelete: Cascade)
+
+  eventType String
+  content   Json
+
+  createdAt DateTime @default(now())
+
+  @@index([recipientDeviceId])
+  @@map("to_device_queue")
+}
