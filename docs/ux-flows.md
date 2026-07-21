@@ -82,6 +82,19 @@ The trigger was Ben hitting the literal problem this section describes: close th
 
 **"Connect directly" removed (2026-07-19), request/accept is now the only add-contact path.** Originally shipped alongside "Send a request" as an immediate, no-accept-step alternative for the in-person-trust case. Live-tested and found to have a real, not-cosmetic, problem: it was purely one-sided — clicking it only added the other person to *your* contact list, with no notification and no reciprocal action on their end. If they hadn't independently also clicked "Connect directly" on you, they had no contact entry to route your side's incoming SAS verification request to at all — the request would go out, but nothing on their screen could ever show it. This surfaced as a confusing, silent verification failure (misreported by the UI as "the emoji didn't match" since the generic cancelled-state copy doesn't distinguish a real mismatch from a request that was never receivable in the first place). The request/accept flow doesn't have this gap — accepting is a real synchronizing network event that updates both sides' contact lists together, guaranteeing whoever verifies next has a place to see it. Share codes stay supported as an alternative to typing a username, just now always going through the request/accept handshake rather than connecting immediately.
 
+## In-conversation actions: reactions, reply, delete, forward, read-receipt opt-out
+
+**Built and live-tested 2026-07-21.** Five per-message actions added to `Conversation.tsx`'s message bubbles, plus a global setting, all riding the same generic to-device relay every other conversation feature already uses — see `docs/crypto-integration-notes.md` for the wire-level design.
+
+- **React:** a fixed row of 6 emoji (👍 ❤️ 😂 😮 😢 🙏), not a full picker — deliberately small and plain, matching this app's minimal styling. Tap the same emoji again to clear your reaction.
+- **Reply:** quotes an earlier message above the composer while composing, and above the resulting bubble once sent. If the quoted message isn't available locally (e.g. it was deleted, or history hasn't synced to this device yet), shows a plain "Original message" placeholder rather than erroring.
+- **Delete for me:** removes the message from your own view only — purely local, no wire event, nothing sent to anyone.
+- **Delete for everyone:** only available on your own sent messages. Tombstones the message on the recipient's devices and your own other devices too (renders "This message was deleted"). A courtesy, not a retroactive guarantee — see `THREAT_MODEL.md`.
+- **Forward:** resends an existing message's plaintext to a different (verified, connected) contact — mechanically identical to composing a new message, just pre-filled.
+- **Read receipts: on/off toggle** (`Sidebar.tsx` header row): a global switch, not per-contact. Off means `m.cycove.read` is simply never sent — the sender's message status stays at "delivered," never advances to "read." Read state is still tracked locally either way, so flipping the toggle back on mid-conversation doesn't cause a burst of late receipts for messages already "seen."
+
+**Also fixed in the same pass, found while designing delete-for-everyone's own-device consistency:** messages sent from one already-linked device now live-echo to your other already-linked devices, not just to the recipient. Previously, two of your own devices open at the same time genuinely wouldn't show each other's sends — only a *newly linked* device caught up, via the one-time bulk history-sync. See `docs/crypto-integration-notes.md`'s "Chat quick-wins" section for the mechanism.
+
 ## Related
 - `Projects/CyCove.md` (Identity model, Architecture)
 - `THREAT_MODEL.md` (MITM at first contact, recovery key theft/loss)
