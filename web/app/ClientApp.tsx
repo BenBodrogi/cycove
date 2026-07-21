@@ -12,11 +12,13 @@ import {
   saveConversations,
   loadOwnUsername,
   saveOwnUsername,
+  loadReadReceiptsEnabled,
+  saveReadReceiptsEnabled,
   encodeShareCode,
   encodePairingCode,
   decodePairingCode,
 } from '../src/lib/store';
-import type { VerificationRequest, Sas, Emoji } from '@matrix-org/matrix-sdk-crypto-wasm';
+import { Sas, type VerificationRequest, type Emoji } from '@matrix-org/matrix-sdk-crypto-wasm';
 import Sidebar from './components/Sidebar';
 import Conversation from './components/Conversation';
 import AddContactPanel from './components/AddContactPanel';
@@ -24,6 +26,7 @@ import EditContactPanel from './components/EditContactPanel';
 import LinkDevicePanel from './components/LinkDevicePanel';
 import QrScanner from './components/QrScanner';
 import DevicesPanel from './components/DevicesPanel';
+import ForwardMessagePanel from './components/ForwardMessagePanel';
 
 // The real chat UI (wireframe screen 03, docs/wireframes.md) — multi-contact,
 // with delivery/read receipts, typing indicators, per-contact avatars, a
@@ -74,10 +77,12 @@ export default function ClientApp() {
   // sessionStorage, so it survives tab close — see src/lib/store.ts.
   const [conversations, setConversations] = useState<Record<string, ChatMessage[]>>({});
   const [ownUsername, setOwnUsername] = useState<string>(() => loadOwnUsername() ?? '');
+  const [readReceiptsEnabled, setReadReceiptsEnabled] = useState<boolean>(() => loadReadReceiptsEnabled());
   const [activeContactUserId, setActiveContactUserId] = useState<string | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [typingContacts, setTypingContacts] = useState<Record<string, boolean>>({});
+  const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null);
 
   const [verifPhase, setVerifPhase] = useState<Record<string, VerifPhase>>({});
   const [verifEmoji, setVerifEmoji] = useState<Record<string, Emoji[] | null>>({});
@@ -175,6 +180,10 @@ export default function ClientApp() {
   }, [ownUsername]);
 
   useEffect(() => {
+    saveReadReceiptsEnabled(readReceiptsEnabled);
+  }, [readReceiptsEnabled]);
+
+  useEffect(() => {
     if (activeContactUserId) return;
     const selectable = contacts.find((c) => c.status !== 'pending-incoming');
     if (selectable) setActiveContactUserId(selectable.userId);
@@ -205,7 +214,11 @@ export default function ClientApp() {
   }, [session, contacts]);
 
   // Sends a read receipt for any not-yet-acknowledged received message in
-  // whichever conversation is currently open.
+  // whichever conversation is currently open — unless the user has opted out
+  // globally (readReceiptsEnabled), in which case we still track locally
+  // that these were "seen" (via alreadySent, so nothing resends if the
+  // setting is flipped back on mid-conversation) without ever transmitting
+  // the m.cycove.read event itself.
   useEffect(() => {
     if (!activeContactUserId || !session) return;
     const contact = contacts.find((c) => c.userId === activeContactUserId);
@@ -215,11 +228,11 @@ export default function ClientApp() {
     for (const m of msgs) {
       if (m.direction === 'received' && !alreadySent.has(m.id)) {
         alreadySent.add(m.id);
-        void session.sendReadReceipt(contact.userId, m.id);
+        if (readReceiptsEnabled) void session.sendReadReceipt(contact.userId, m.id);
       }
     }
     readSentRef.current.set(activeContactUserId, alreadySent);
-  }, [activeContactUserId, conversations, contacts, session]);
+  }, [activeContactUserId, conversations, contacts, session, readReceiptsEnabled]);
 
   function refreshVerifState(contactUserId: string) {
     const sas = verifSasRefs.current.get(contactUserId);
@@ -256,7 +269,10 @@ export default function ClientApp() {
       const request = verifRequestRefs.current.get(contactUserId)!;
       const verification = request.getVerification();
       // getVerification() can also return a Qr — this app only speaks SAS.
-      const existingSas = verification?.constructor.name === 'Sas' ? (verification as Sas) : undefined;
+      // instanceof, not a .constructor.name string check — the latter broke
+      // in the production build once minification renamed the wasm-bindgen
+      // classes (see crypto.ts's processOutgoingRequests for the full story).
+      const existingSas = verification instanceof Sas ? verification : undefined;
       if (existingSas && !verifSasRefs.current.has(contactUserId)) {
         verifSasRefs.current.set(contactUserId, existingSas);
         existingSas.registerChangesCallback(async () => refreshVerifState(contactUserId));
@@ -344,8 +360,65 @@ export default function ClientApp() {
 
     switch (result.kind) {
       case 'message': {
-        const newMsg: ChatMessage = { id: result.id, direction: 'received', body: result.text, timestamp: Date.now(), status: 'delivered' };
+        const newMsg: ChatMessage = {
+          id: result.id,
+          direction: 'received',
+          body: result.text,
+          timestamp: Date.now(),
+          status: 'delivered',
+          replyToId: result.replyToId,
+        };
         await applyConversationsUpdate(session_, (prev) => ({ ...prev, [senderUserId]: [...(prev[senderUserId] ?? []), newMsg] }));
+        break;
+      }
+      case 'message_echo': {
+        // A message WE sent, arriving from one of our own other devices —
+        // displays as 'sent' here too. Dedup defensively: encryptAndSend
+        // already excludes this.deviceId from the self-fanout targets, so
+        // the sending device itself should never see its own echo, but this
+        // guard costs nothing and matches history_sync's own dedup caution.
+        const newMsg: ChatMessage = {
+          id: result.id,
+          direction: 'sent',
+          body: result.text,
+          timestamp: Date.now(),
+          status: 'sent',
+          replyToId: result.replyToId,
+        };
+        await applyConversationsUpdate(session_, (prev) => {
+          const existing = prev[result.contactUserId] ?? [];
+          if (existing.some((m) => m.id === result.id)) return prev;
+          return { ...prev, [result.contactUserId]: [...existing, newMsg] };
+        });
+        break;
+      }
+      case 'reaction': {
+        const field = result.fromSelf ? 'mine' : 'theirs';
+        await applyConversationsUpdate(session_, (prev) => {
+          const existing = prev[result.contactUserId];
+          if (!existing) return prev;
+          return {
+            ...prev,
+            [result.contactUserId]: existing.map((m) => {
+              if (m.id !== result.messageId) return m;
+              const reactions = { ...m.reactions };
+              if (result.emoji) reactions[field] = result.emoji;
+              else delete reactions[field];
+              return { ...m, reactions };
+            }),
+          };
+        });
+        break;
+      }
+      case 'delete': {
+        await applyConversationsUpdate(session_, (prev) => {
+          const existing = prev[result.contactUserId];
+          if (!existing) return prev;
+          return {
+            ...prev,
+            [result.contactUserId]: existing.map((m) => (m.id === result.messageId ? { ...m, deleted: true, body: '' } : m)),
+          };
+        });
         break;
       }
       case 'receipt':
@@ -669,12 +742,60 @@ export default function ClientApp() {
     setEditingContact(null);
   }
 
-  async function handleSend(contactUserId: string, text: string) {
+  async function handleSend(contactUserId: string, text: string, replyToId?: string) {
     const session_ = sessionRef.current;
     if (!session_) return;
-    const messageId = await session_.sendMessage(contactUserId, text);
-    const newMsg: ChatMessage = { id: messageId, direction: 'sent', body: text, timestamp: Date.now(), status: 'sent' };
+    const messageId = await session_.sendMessage(contactUserId, text, replyToId);
+    const newMsg: ChatMessage = { id: messageId, direction: 'sent', body: text, timestamp: Date.now(), status: 'sent', replyToId };
     await applyConversationsUpdate(session_, (prev) => ({ ...prev, [contactUserId]: [...(prev[contactUserId] ?? []), newMsg] }));
+  }
+
+  async function handleReact(contactUserId: string, messageId: string, emoji: string) {
+    const session_ = sessionRef.current;
+    if (!session_) return;
+    const current = conversationsRef.current[contactUserId]?.find((m) => m.id === messageId);
+    const nextEmoji = current?.reactions?.mine === emoji ? null : emoji; // tap the same emoji again to clear
+    await session_.sendReaction(contactUserId, messageId, nextEmoji);
+    await applyConversationsUpdate(session_, (prev) => {
+      const existing = prev[contactUserId];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [contactUserId]: existing.map((m) => {
+          if (m.id !== messageId) return m;
+          const reactions = { ...m.reactions };
+          if (nextEmoji) reactions.mine = nextEmoji;
+          else delete reactions.mine;
+          return { ...m, reactions };
+        }),
+      };
+    });
+  }
+
+  async function handleDeleteForMe(contactUserId: string, messageId: string) {
+    const session_ = sessionRef.current;
+    if (!session_) return;
+    await applyConversationsUpdate(session_, (prev) => {
+      const existing = prev[contactUserId];
+      if (!existing) return prev;
+      return { ...prev, [contactUserId]: existing.filter((m) => m.id !== messageId) };
+    });
+  }
+
+  async function handleDeleteForEveryone(contactUserId: string, messageId: string) {
+    const session_ = sessionRef.current;
+    if (!session_) return;
+    await session_.deleteMessageForEveryone(contactUserId, messageId);
+    await applyConversationsUpdate(session_, (prev) => {
+      const existing = prev[contactUserId];
+      if (!existing) return prev;
+      return { ...prev, [contactUserId]: existing.map((m) => (m.id === messageId ? { ...m, deleted: true, body: '' } : m)) };
+    });
+  }
+
+  async function handleForward(targetContactUserId: string, text: string) {
+    await handleSend(targetContactUserId, text);
+    setForwardingMessage(null);
   }
 
   async function handleStartVerification(contactUserId: string, peerDeviceId: string) {
@@ -883,6 +1004,8 @@ export default function ClientApp() {
         activeContactUserId={activeContactUserId}
         verifPhase={verifPhase}
         typingContacts={typingContacts}
+        readReceiptsEnabled={readReceiptsEnabled}
+        onToggleReadReceipts={() => setReadReceiptsEnabled((v) => !v)}
         onSelectContact={setActiveContactUserId}
         onShowAddContact={() => setShowAddContact(true)}
         onAcceptRequest={(userId) => void handleAcceptRequest(userId)}
@@ -901,13 +1024,17 @@ export default function ClientApp() {
           verifPhase={verifPhase[activeContact.userId] ?? 'idle'}
           verifEmoji={verifEmoji[activeContact.userId] ?? null}
           isPeerTyping={typingContacts[activeContact.userId] ?? false}
-          onSend={(text) => void handleSend(activeContact.userId, text)}
+          onSend={(text, replyToId) => void handleSend(activeContact.userId, text, replyToId)}
           onTypingStart={() => void sessionRef.current?.sendTyping(activeContact.userId, 'start')}
           onTypingStop={() => void sessionRef.current?.sendTyping(activeContact.userId, 'stop')}
           onStartVerification={() => void handleStartVerification(activeContact.userId, activeContact.deviceIds[0]!)}
           onAcceptVerification={() => handleAcceptIncomingVerification(activeContact.userId)}
           onConfirmMatch={() => void handleConfirmMatch(activeContact.userId)}
           onRejectMatch={() => handleRejectMatch(activeContact.userId)}
+          onReact={(messageId, emoji) => void handleReact(activeContact.userId, messageId, emoji)}
+          onDeleteForMe={(messageId) => void handleDeleteForMe(activeContact.userId, messageId)}
+          onDeleteForEveryone={(messageId) => void handleDeleteForEveryone(activeContact.userId, messageId)}
+          onForward={(message) => setForwardingMessage(message)}
         />
       ) : (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
@@ -947,6 +1074,14 @@ export default function ClientApp() {
           currentDeviceId={session.deviceId}
           onRevoke={(deviceId) => void handleRevokeDevice(deviceId)}
           onClose={() => setShowDevicesPanel(false)}
+        />
+      )}
+
+      {forwardingMessage && (
+        <ForwardMessagePanel
+          contacts={contacts.filter((c) => c.status === 'connected' && verifPhase[c.userId] === 'verified')}
+          onForward={(targetContactUserId) => void handleForward(targetContactUserId, forwardingMessage.body)}
+          onClose={() => setForwardingMessage(null)}
         />
       )}
     </div>

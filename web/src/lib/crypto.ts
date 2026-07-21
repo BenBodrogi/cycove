@@ -4,8 +4,14 @@ import {
   DeviceId,
   DeviceLists,
   initAsync,
+  KeysUploadRequest,
+  KeysQueryRequest,
+  KeysClaimRequest,
+  ToDeviceRequest,
+  DecryptedToDeviceEvent,
+  Sas,
   type VerificationRequest,
-  type Sas,
+  type RoomMessageRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
 import type { ChatMessage } from './store';
 
@@ -143,10 +149,13 @@ async function loadBackupKey(): Promise<CryptoKey | null> {
  * OlmMachine at all, see the note on sendContactRequest/sendPlain below.
  */
 export type IncomingResult =
-  | { kind: 'message'; id: string; text: string }
+  | { kind: 'message'; id: string; text: string; replyToId?: string }
+  | { kind: 'message_echo'; contactUserId: string; id: string; text: string; replyToId?: string }
   | { kind: 'receipt'; messageId: string }
   | { kind: 'read'; messageId: string }
   | { kind: 'typing'; state: 'start' | 'stop' }
+  | { kind: 'reaction'; contactUserId: string; messageId: string; emoji: string | null; fromSelf: boolean }
+  | { kind: 'delete'; contactUserId: string; messageId: string }
   | { kind: 'history_sync'; contactUserId: string; messages: ChatMessage[] }
   | { kind: 'none' };
 
@@ -186,11 +195,11 @@ export class CyCoveCrypto {
     );
 
     const initialRequests = await machine.outgoingRequests();
-    const uploadReq = initialRequests.find((r) => r.constructor.name === 'KeysUploadRequest');
-    if (!uploadReq || !('body' in uploadReq) || !uploadReq.id) {
+    const uploadReq = initialRequests.find((r) => r instanceof KeysUploadRequest);
+    if (!uploadReq || !uploadReq.id) {
       throw new Error('Expected a KeysUploadRequest (with an id) immediately after OlmMachine.initialize()');
     }
-    const uploadBody = JSON.parse(uploadReq.body as string) as {
+    const uploadBody = JSON.parse(uploadReq.body) as {
       device_keys: unknown;
       one_time_keys: Record<string, unknown>;
     };
@@ -262,7 +271,7 @@ export class CyCoveCrypto {
     // silently proceeding with a mismatched identity — see ClientApp.tsx's
     // handleLogin for how this specific error routes the user to linking.
     const pending = await machine.outgoingRequests();
-    if (pending.some((r) => r.constructor.name === 'KeysUploadRequest')) {
+    if (pending.some((r) => r instanceof KeysUploadRequest)) {
       throw new Error('KEYS_NOT_ON_THIS_DEVICE');
     }
 
@@ -291,11 +300,11 @@ export class CyCoveCrypto {
     const machine = await OlmMachine.initialize(new UserId(userId), new DeviceId(deviceId), `cycove-${deviceId}`);
 
     const initialRequests = await machine.outgoingRequests();
-    const uploadReq = initialRequests.find((r) => r.constructor.name === 'KeysUploadRequest');
-    if (!uploadReq || !('body' in uploadReq) || !uploadReq.id) {
+    const uploadReq = initialRequests.find((r) => r instanceof KeysUploadRequest);
+    if (!uploadReq || !uploadReq.id) {
       throw new Error('Expected a KeysUploadRequest immediately after OlmMachine.initialize()');
     }
-    const uploadBody = JSON.parse(uploadReq.body as string) as {
+    const uploadBody = JSON.parse(uploadReq.body) as {
       device_keys: unknown;
       one_time_keys: Record<string, unknown>;
     };
@@ -331,8 +340,12 @@ export class CyCoveCrypto {
    * These come back as direct return values from verification methods, not
    * through outgoingRequests() — no markRequestAsSent needed for them.
    */
-  private relayOutgoing(out: { constructor: { name: string }; body?: string; event_type?: string } | undefined): void {
-    if (!out || out.constructor.name !== 'ToDeviceRequest' || !out.body || !out.event_type) return;
+  // CyCove has no rooms, so the RoomMessageRequest half of the SDK's
+  // OutgoingVerificationRequest union should never actually occur — the
+  // instanceof check below just makes that assumption explicit rather than
+  // silently ignoring an unexpected type.
+  private relayOutgoing(out: ToDeviceRequest | RoomMessageRequest | undefined): void {
+    if (!out || !(out instanceof ToDeviceRequest)) return;
     const body = JSON.parse(out.body) as { messages: Record<string, Record<string, unknown>> };
     for (const devices of Object.values(body.messages)) {
       for (const [deviceId, content] of Object.entries(devices)) {
@@ -341,34 +354,34 @@ export class CyCoveCrypto {
     }
   }
 
-  /** Dispatches whatever OlmMachine currently wants to send, against the matching backend endpoint (or the relay, for ToDeviceRequests). */
+  /**
+   * Dispatches whatever OlmMachine currently wants to send, against the
+   * matching backend endpoint (or the relay, for ToDeviceRequests). Uses
+   * `instanceof` against the real imported classes, not `.constructor.name`
+   * string comparisons — those silently broke in the production build once
+   * minification renamed the wasm-bindgen classes (e.g. KeysUploadRequest
+   * became `X`), a real bug found live testing registration in production;
+   * instanceof checks survive minification since they reference the actual
+   * (consistently renamed) class binding, not a stale string literal.
+   */
   private async processOutgoingRequests(): Promise<void> {
     const requests = await this.machine.outgoingRequests();
     for (const req of requests) {
       if (!req.id) continue; // e.g. a SignatureUploadRequest outside interactive verification — not used here, can't ack without an id anyway
-      const body = 'body' in req ? JSON.parse(req.body as string) : undefined;
       let response: unknown = {};
 
-      switch (req.constructor.name) {
-        case 'KeysUploadRequest':
-          response = await apiFetch('/keys/upload', this.sessionToken, { body });
-          break;
-        case 'KeysQueryRequest':
-          response = await apiFetch('/keys/query', this.sessionToken, { body });
-          break;
-        case 'KeysClaimRequest':
-          response = await apiFetch('/keys/claim', this.sessionToken, { body });
-          break;
-        case 'ToDeviceRequest':
-          // Verification's key/mac/done steps arrive here as a side effect
-          // of processing an incoming event, not as a direct return value —
-          // see docs/crypto-integration-notes.md. Actually relay them now
-          // (this used to be a no-op stub before verification existed).
-          this.relayOutgoing(req as unknown as { constructor: { name: string }; body?: string; event_type?: string });
-          response = {};
-          break;
-        default:
-          response = {};
+      if (req instanceof KeysUploadRequest) {
+        response = await apiFetch('/keys/upload', this.sessionToken, { body: JSON.parse(req.body) });
+      } else if (req instanceof KeysQueryRequest) {
+        response = await apiFetch('/keys/query', this.sessionToken, { body: JSON.parse(req.body) });
+      } else if (req instanceof KeysClaimRequest) {
+        response = await apiFetch('/keys/claim', this.sessionToken, { body: JSON.parse(req.body) });
+      } else if (req instanceof ToDeviceRequest) {
+        // Verification's key/mac/done steps arrive here as a side effect of
+        // processing an incoming event, not as a direct return value — see
+        // docs/crypto-integration-notes.md. Actually relay them now (this
+        // used to be a no-op stub before verification existed).
+        this.relayOutgoing(req);
       }
 
       await this.machine.markRequestAsSent(req.id, req.type, JSON.stringify(response));
@@ -543,6 +556,29 @@ export class CyCoveCrypto {
   }
 
   /**
+   * Sends a per-message conversation event (a sent message, a reaction, a
+   * delete) to every current device of the contact AND every other device of
+   * our own account, so the effect is consistent everywhere we're logged in,
+   * not just wherever it originated — the same class of gap the original
+   * single-device fan-out bug was, just for per-message actions instead of
+   * the initial send. Own-device copies carry an explicit contactUserId,
+   * since handleIncoming can't infer it the way it can for contact-directed
+   * copies (where senderUserId IS the contact) — same reason
+   * sendHistorySync's payload does. Known cost: adds one GET /devices round
+   * trip per call to enumerate own devices — not cached, a deliberate
+   * simplification for now.
+   */
+  private async fanOutConversationEvent(peerUserId: string, eventType: string, content: Record<string, unknown>): Promise<void> {
+    await this.encryptAndSendToAllDevices(peerUserId, eventType, content);
+    const ownDeviceIds = (await this.listDevices()).map((d) => d.id).filter((id) => id !== this.deviceId);
+    if (ownDeviceIds.length === 0) return;
+    await this.ensureSessionWith(this.userId);
+    await Promise.all(
+      ownDeviceIds.map((id) => this.encryptAndSend(this.userId, id, eventType, { ...content, contactUserId: peerUserId })),
+    );
+  }
+
+  /**
    * Sends a to-device event with no Olm encryption at all — same pattern as
    * verification's plaintext m.key.verification.* events. Doesn't need
    * ensureSessionWith first (no device_keys lookup, no session). Used only
@@ -555,11 +591,35 @@ export class CyCoveCrypto {
     this.sender?.(peerDeviceId, eventType, content);
   }
 
-  /** Encrypts a plaintext message body and fans it out to every current device of the contact. Returns the client-generated message id (the same id in every copy), used to match up the delivery/read receipts later. */
-  async sendMessage(peerUserId: string, plaintextBody: string): Promise<string> {
+  /**
+   * Encrypts a plaintext message body and fans it out to every current
+   * device of the contact AND every other device of our own account (see
+   * fanOutConversationEvent) — a message sent from one device now live-echoes
+   * to your other already-linked devices, not just the one-time bulk sync a
+   * newly linked device gets. Returns the client-generated message id (the
+   * same id in every copy), used to match up the delivery/read receipts
+   * later. replyToId, if given, is carried along so recipients (including
+   * our own other devices) can render the quoted reference.
+   */
+  async sendMessage(peerUserId: string, plaintextBody: string, replyToId?: string): Promise<string> {
     const messageId = crypto.randomUUID();
-    await this.encryptAndSendToAllDevices(peerUserId, 'm.cycove.message', { body: plaintextBody, id: messageId });
+    await this.fanOutConversationEvent(peerUserId, 'm.cycove.message', { body: plaintextBody, id: messageId, replyToId });
     return messageId;
+  }
+
+  /** Sets or clears (emoji: null) our own reaction to a message, fanned out the same way as sendMessage. */
+  sendReaction(peerUserId: string, messageId: string, emoji: string | null): Promise<void> {
+    return this.fanOutConversationEvent(peerUserId, 'm.cycove.reaction', { message_id: messageId, emoji });
+  }
+
+  /**
+   * Tombstones one of OUR OWN sent messages everywhere — the contact's
+   * devices and our own other devices. Not a guarantee the recipient never
+   * saw the plaintext (they may already have read/screenshotted it before
+   * this arrives) — see THREAT_MODEL.md.
+   */
+  deleteMessageForEveryone(peerUserId: string, messageId: string): Promise<void> {
+    return this.fanOutConversationEvent(peerUserId, 'm.cycove.delete', { message_id: messageId });
   }
 
   /**
@@ -708,8 +768,8 @@ export class CyCoveCrypto {
     await this.processOutgoingRequests();
 
     for (const event of processed) {
-      if (event.constructor.name === 'DecryptedToDeviceEvent' && 'rawEvent' in event) {
-        const raw = JSON.parse((event as { rawEvent: string }).rawEvent) as {
+      if (event instanceof DecryptedToDeviceEvent) {
+        const raw = JSON.parse(event.rawEvent) as {
           type?: string;
           content?: {
             body?: string;
@@ -719,15 +779,36 @@ export class CyCoveCrypto {
             state?: string;
             contactUserId?: string;
             messages?: ChatMessage[];
+            replyToId?: string;
+            emoji?: string | null;
           };
         };
+
+        // senderUserId === this.userId means this arrived from one of OUR
+        // OWN sibling devices (fanOutConversationEvent's self-directed copy),
+        // not the contact themselves — the real contact rides along in
+        // contactUserId. Otherwise senderUserId IS the contact, same as
+        // every event type has always assumed. Used by every per-message
+        // case below (message, reaction, delete).
+        const resolveContactUserId = (): string | undefined =>
+          senderUserId === this.userId ? raw.content?.contactUserId : senderUserId;
 
         switch (raw.type) {
           case 'm.cycove.message': {
             if (!raw.content?.id || raw.content.body === undefined) break;
             const messageId = raw.content.id;
+            if (senderUserId === this.userId) {
+              // Live echo of a message THIS account sent from a different
+              // device — not an incoming message from a contact, so: no
+              // receipt sent back (that would mean sending ourselves a
+              // delivery receipt), and it displays as 'sent' here too, not
+              // 'received' — see ClientApp.tsx's message_echo case.
+              const contactUserId = resolveContactUserId();
+              if (!contactUserId) break;
+              return { kind: 'message_echo', contactUserId, id: messageId, text: raw.content.body, replyToId: raw.content.replyToId };
+            }
             await this.encryptAndSend(senderUserId, senderDeviceId, 'm.cycove.receipt', { message_id: messageId });
-            return { kind: 'message', id: messageId, text: raw.content.body };
+            return { kind: 'message', id: messageId, text: raw.content.body, replyToId: raw.content.replyToId };
           }
           case 'm.cycove.receipt':
             if (raw.content?.message_id) return { kind: 'receipt', messageId: raw.content.message_id };
@@ -740,6 +821,24 @@ export class CyCoveCrypto {
               return { kind: 'typing', state: raw.content.state };
             }
             break;
+          case 'm.cycove.reaction': {
+            if (!raw.content?.message_id) break;
+            const contactUserId = resolveContactUserId();
+            if (!contactUserId) break;
+            return {
+              kind: 'reaction',
+              contactUserId,
+              messageId: raw.content.message_id,
+              emoji: raw.content.emoji ?? null,
+              fromSelf: senderUserId === this.userId,
+            };
+          }
+          case 'm.cycove.delete': {
+            if (!raw.content?.message_id) break;
+            const contactUserId = resolveContactUserId();
+            if (!contactUserId) break;
+            return { kind: 'delete', contactUserId, messageId: raw.content.message_id };
+          }
           case 'm.cycove.history_sync':
             if (raw.content?.contactUserId && Array.isArray(raw.content.messages)) {
               return { kind: 'history_sync', contactUserId: raw.content.contactUserId, messages: raw.content.messages };

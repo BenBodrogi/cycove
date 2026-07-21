@@ -10,6 +10,8 @@ interface SidebarProps {
   activeContactUserId: string | null;
   verifPhase: Record<string, VerifPhase>;
   typingContacts: Record<string, boolean>;
+  readReceiptsEnabled: boolean;
+  onToggleReadReceipts: () => void;
   onSelectContact: (userId: string) => void;
   onShowAddContact: () => void;
   onAcceptRequest: (userId: string) => void;
@@ -30,6 +32,8 @@ export default function Sidebar({
   activeContactUserId,
   verifPhase,
   typingContacts,
+  readReceiptsEnabled,
+  onToggleReadReceipts,
   onSelectContact,
   onShowAddContact,
   onAcceptRequest,
@@ -60,6 +64,12 @@ export default function Sidebar({
           </button>
           <button onClick={onShowDevices} title="Your devices">
             Your devices
+          </button>
+          <button
+            onClick={onToggleReadReceipts}
+            title={readReceiptsEnabled ? 'Read receipts on — click to stop sending them' : 'Read receipts off — click to resume sending them'}
+          >
+            Read receipts: {readReceiptsEnabled ? 'on' : 'off'}
           </button>
           <button onClick={onLogout} title="Log out">
             Log out

@@ -30,10 +30,18 @@ export interface ChatMessage {
   body: string;
   timestamp: number;
   status: 'sent' | 'delivered' | 'read';
+  replyToId?: string;
+  // 1:1 chat — only two possible reactors, no need for a map keyed by user.
+  reactions?: { mine?: string; theirs?: string };
+  // Tombstoned via "delete for everyone" — body is cleared client-side once
+  // set, UI shows a placeholder instead. "Delete for me" instead removes the
+  // message from the array entirely (nothing to reconcile with anyone else).
+  deleted?: boolean;
 }
 
 const CONTACTS_KEY = 'cycove_contacts';
 const OWN_USERNAME_KEY = 'cycove_own_username';
+const READ_RECEIPTS_ENABLED_KEY = 'cycove_read_receipts_enabled';
 
 export function loadContacts(): Contact[] {
   const raw = sessionStorage.getItem(CONTACTS_KEY);
@@ -127,6 +135,17 @@ export function loadOwnUsername(): string | null {
 export function saveOwnUsername(username: string | null): void {
   if (username) sessionStorage.setItem(OWN_USERNAME_KEY, username);
   else sessionStorage.removeItem(OWN_USERNAME_KEY);
+}
+
+// Global opt-out for sending m.cycove.read events — defaults to enabled
+// (matches every messaging app's out-of-the-box behavior), a single toggle
+// rather than per-contact for now.
+export function loadReadReceiptsEnabled(): boolean {
+  return sessionStorage.getItem(READ_RECEIPTS_ENABLED_KEY) !== 'false';
+}
+
+export function saveReadReceiptsEnabled(enabled: boolean): void {
+  sessionStorage.setItem(READ_RECEIPTS_ENABLED_KEY, String(enabled));
 }
 
 // Share codes — a copy-pasteable stand-in for QR-code contact adding (wireframe
