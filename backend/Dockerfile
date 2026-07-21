@@ -7,6 +7,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 COPY backend/package*.json backend/
+COPY backend/prisma backend/prisma
 RUN npm ci --workspace=backend
 COPY backend backend
 COPY tsconfig.base.json ./
