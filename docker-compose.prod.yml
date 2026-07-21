@@ -1,0 +1,44 @@
+# Production stack for the Hetzner VPS. Postgres and Redis are not published
+# to the host at all — only reachable by the backend over the compose network
+# — since nothing outside this stack needs to talk to them directly. Backend
+# itself is bound to 127.0.0.1 only for now, until a reverse proxy + TLS is
+# in front of it (see roadmap in .claude/plan.md); not safe to expose on
+# 0.0.0.0 until then.
+#
+# Secrets (DB password, etc.) live in backend/.env on the server, gitignored,
+# never in this file.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_USER: cycove
+      POSTGRES_DB: cycove
+    volumes:
+      - cycove_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - cycove_redis_data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  cycove_postgres_data:
+  cycove_redis_data:
