@@ -848,7 +848,12 @@ export default function ClientApp() {
   if (!session) {
     return (
       <main style={{ maxWidth: 480, margin: '80px auto', padding: '0 16px', fontSize: 14, textAlign: 'center' }}>
-        <h1>CyCove</h1>
+        <h1>
+          CyCove{' '}
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#c0392b', border: '1px solid #c0392b', borderRadius: 4, padding: '2px 6px', verticalAlign: 'middle' }}>
+            OPEN ALPHA
+          </span>
+        </h1>
         <p style={{ color: '#666' }}>{status}</p>
 
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid #ddd', justifyContent: 'center' }}>

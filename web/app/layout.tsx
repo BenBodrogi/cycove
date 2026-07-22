@@ -1,6 +1,6 @@
 export const metadata = {
-  title: 'CyCove — dev test client',
-  description: 'Minimal test UI for CyCove E2EE — not the real product UI, see Projects/CyCove.md.',
+  title: 'CyCove — OPEN ALPHA',
+  description: 'CyCove E2EE messenger — open alpha.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

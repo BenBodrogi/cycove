@@ -53,25 +53,29 @@ export default function Sidebar({
         height: '100%',
       }}
     >
-      <div style={{ padding: 12, borderBottom: '1px solid #ddd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: 12, borderBottom: '1px solid #ddd' }}>
         <strong>CyCove</strong>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={onShowAddContact} title="Add a contact">
+        {/* flexWrap so all buttons stay reachable regardless of how many
+            there are — a fixed-width unwrapped row let them overflow off
+            the sidebar's edge, making Log out (the last one) unclickable. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          <button onClick={onShowAddContact} title="Add a contact" style={{ fontSize: 12 }}>
             + Add
           </button>
-          <button onClick={onShowLinkDevice} title="Link a device">
+          <button onClick={onShowLinkDevice} title="Link a device" style={{ fontSize: 12 }}>
             Link a device
           </button>
-          <button onClick={onShowDevices} title="Your devices">
+          <button onClick={onShowDevices} title="Your devices" style={{ fontSize: 12 }}>
             Your devices
           </button>
           <button
             onClick={onToggleReadReceipts}
             title={readReceiptsEnabled ? 'Read receipts on — click to stop sending them' : 'Read receipts off — click to resume sending them'}
+            style={{ fontSize: 12 }}
           >
             Read receipts: {readReceiptsEnabled ? 'on' : 'off'}
           </button>
-          <button onClick={onLogout} title="Log out">
+          <button onClick={onLogout} title="Log out" style={{ fontSize: 12 }}>
             Log out
           </button>
         </div>
