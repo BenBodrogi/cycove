@@ -14,12 +14,14 @@ import {
   saveOwnUsername,
   loadReadReceiptsEnabled,
   saveReadReceiptsEnabled,
+  loadNotificationsEnabled,
+  saveNotificationsEnabled,
   encodeShareCode,
   encodePairingCode,
   decodePairingCode,
 } from '../src/lib/store';
 import { Sas, type VerificationRequest, type Emoji } from '@matrix-org/matrix-sdk-crypto-wasm';
-import Sidebar from './components/Sidebar';
+import Sidebar, { contactLabel } from './components/Sidebar';
 import Conversation from './components/Conversation';
 import AddContactPanel from './components/AddContactPanel';
 import EditContactPanel from './components/EditContactPanel';
@@ -78,6 +80,7 @@ export default function ClientApp() {
   const [conversations, setConversations] = useState<Record<string, ChatMessage[]>>({});
   const [ownUsername, setOwnUsername] = useState<string>(() => loadOwnUsername() ?? '');
   const [readReceiptsEnabled, setReadReceiptsEnabled] = useState<boolean>(() => loadReadReceiptsEnabled());
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => loadNotificationsEnabled());
   const [activeContactUserId, setActiveContactUserId] = useState<string | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
@@ -108,6 +111,14 @@ export default function ClientApp() {
   // reconcileAndSyncHistory, which runs from several places including a
   // polling effect and callbacks registered once at mount.
   const conversationsRef = useRef<Record<string, ChatMessage[]>>({});
+  // Same staleness reason as conversationsRef — handleIncomingEvent is only
+  // (re)captured by the WS connection effect when `session` changes, so a
+  // closed-over `contacts` read inside it would be frozen at whatever it was
+  // when the connection was set up. Used for notification labels.
+  const contactsRef = useRef<Contact[]>([]);
+  // Same reason as contactsRef — read inside handleIncomingEvent, which only
+  // sees the value as of when the WS connection effect last ran.
+  const notificationsEnabledRef = useRef(false);
 
   /**
    * Updates conversationsRef.current synchronously (not via a setState
@@ -176,12 +187,37 @@ export default function ClientApp() {
   }, [conversations]);
 
   useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]);
+
+  useEffect(() => {
+    notificationsEnabledRef.current = notificationsEnabled;
+  }, [notificationsEnabled]);
+
+  useEffect(() => {
     saveOwnUsername(ownUsername || null);
   }, [ownUsername]);
 
   useEffect(() => {
     saveReadReceiptsEnabled(readReceiptsEnabled);
   }, [readReceiptsEnabled]);
+
+  useEffect(() => {
+    saveNotificationsEnabled(notificationsEnabled);
+  }, [notificationsEnabled]);
+
+  // Only ever requests browser permission in direct response to the user
+  // clicking the toggle (never on page load unprompted — an unsolicited
+  // permission prompt gets auto-denied by most browsers anyway, and is bad
+  // practice regardless). Turning it back off never revokes the OS-level
+  // permission (browsers don't allow that from script), it just stops this
+  // app from calling the Notification constructor.
+  async function handleToggleNotifications() {
+    if (!notificationsEnabled && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+    setNotificationsEnabled((v) => !v);
+  }
 
   useEffect(() => {
     if (activeContactUserId) return;
@@ -338,6 +374,29 @@ export default function ClientApp() {
     }
   }
 
+  /**
+   * Fires a browser Notification for an incoming message, only when this
+   * tab is actually in the background (document.hidden) — no point
+   * notifying about something already on screen. Shows the contact's label,
+   * never the message body: unlike this app's own IndexedDB/session storage,
+   * an OS notification center is a channel this app doesn't control (it may
+   * get logged, synced to other devices, or shown on a lock screen) — same
+   * "opaque payload" principle already applied to FCM push in THREAT_MODEL.md,
+   * just because this is a different channel, not because the constraint
+   * changed. Clicking it focuses the tab.
+   */
+  function maybeNotify(contactUserId: string) {
+    if (!notificationsEnabledRef.current || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+    const contact = contactsRef.current.find((c) => c.userId === contactUserId);
+    const label = contact ? contactLabel(contact) : 'a contact';
+    const notification = new Notification('CyCove', { body: `New message from ${label}` });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  }
+
   async function handleIncomingEvent(msg: DeliveredToDeviceEvent) {
     const session_ = sessionRef.current;
     const connection = connectionRef.current;
@@ -369,6 +428,7 @@ export default function ClientApp() {
           replyToId: result.replyToId,
         };
         await applyConversationsUpdate(session_, (prev) => ({ ...prev, [senderUserId]: [...(prev[senderUserId] ?? []), newMsg] }));
+        maybeNotify(senderUserId);
         break;
       }
       case 'message_echo': {
@@ -1011,6 +1071,8 @@ export default function ClientApp() {
         typingContacts={typingContacts}
         readReceiptsEnabled={readReceiptsEnabled}
         onToggleReadReceipts={() => setReadReceiptsEnabled((v) => !v)}
+        notificationsEnabled={notificationsEnabled}
+        onToggleNotifications={() => void handleToggleNotifications()}
         onSelectContact={setActiveContactUserId}
         onShowAddContact={() => setShowAddContact(true)}
         onAcceptRequest={(userId) => void handleAcceptRequest(userId)}

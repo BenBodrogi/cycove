@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 
 interface LinkDevicePanelProps {
   pairingCode: string | null;
@@ -13,6 +14,8 @@ interface LinkDevicePanelProps {
 export default function LinkDevicePanel({ pairingCode, expiresAt, onRequestNewCode, onClose }: LinkDevicePanelProps) {
   const [secondsLeft, setSecondsLeft] = useState(() => (expiresAt ? Math.max(0, Math.round((expiresAt - Date.now()) / 1000)) : 0));
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+
+  useEscapeKey(onClose);
 
   useEffect(() => {
     if (!expiresAt) return;

@@ -3,6 +3,7 @@
 import { useState, type ChangeEvent } from 'react';
 import type { Contact } from '../../src/lib/store';
 import { fileToAvatarDataUrl } from '../../src/lib/store';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 import Avatar from './Avatar';
 
 interface EditContactPanelProps {
@@ -15,6 +16,8 @@ export default function EditContactPanel({ contact, onSave, onClose }: EditConta
   const [nickname, setNickname] = useState(contact.nickname ?? '');
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(contact.avatarDataUrl);
   const [error, setError] = useState<string | null>(null);
+
+  useEscapeKey(onClose);
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];

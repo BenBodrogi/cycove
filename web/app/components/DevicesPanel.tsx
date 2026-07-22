@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 
 interface DeviceRow {
   id: string;
@@ -17,6 +18,8 @@ interface DevicesPanelProps {
 
 export default function DevicesPanel({ devices, currentDeviceId, onRevoke, onClose }: DevicesPanelProps) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
+  useEscapeKey(onClose);
 
   return (
     <div

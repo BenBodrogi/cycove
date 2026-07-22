@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { Contact, ChatMessage } from '../../src/lib/store';
 import type { VerifPhase } from '../ClientApp';
 import Avatar from './Avatar';
@@ -12,6 +13,8 @@ interface SidebarProps {
   typingContacts: Record<string, boolean>;
   readReceiptsEnabled: boolean;
   onToggleReadReceipts: () => void;
+  notificationsEnabled: boolean;
+  onToggleNotifications: () => void;
   onSelectContact: (userId: string) => void;
   onShowAddContact: () => void;
   onAcceptRequest: (userId: string) => void;
@@ -34,6 +37,8 @@ export default function Sidebar({
   typingContacts,
   readReceiptsEnabled,
   onToggleReadReceipts,
+  notificationsEnabled,
+  onToggleNotifications,
   onSelectContact,
   onShowAddContact,
   onAcceptRequest,
@@ -43,6 +48,11 @@ export default function Sidebar({
   onShowDevices,
   onLogout,
 }: SidebarProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const visibleContacts = searchQuery.trim()
+    ? contacts.filter((c) => contactLabel(c).toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : contacts;
+
   return (
     <aside
       style={{
@@ -75,17 +85,37 @@ export default function Sidebar({
           >
             Read receipts: {readReceiptsEnabled ? 'on' : 'off'}
           </button>
+          <button
+            onClick={onToggleNotifications}
+            title={
+              notificationsEnabled
+                ? 'Notifications on — click to stop'
+                : 'Notify me of new messages when this tab is in the background (asks for browser permission)'
+            }
+            style={{ fontSize: 12 }}
+          >
+            Notifications: {notificationsEnabled ? 'on' : 'off'}
+          </button>
           <button onClick={onLogout} title="Log out" style={{ fontSize: 12 }}>
             Log out
           </button>
         </div>
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search contacts"
+          style={{ width: '100%', marginTop: 8, padding: 6, fontSize: 13, boxSizing: 'border-box' }}
+        />
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {contacts.length === 0 && (
           <p style={{ padding: 12, color: '#888', fontSize: 13 }}>No contacts yet. Click "+ Add" to connect with someone.</p>
         )}
-        {contacts.map((contact) => {
+        {contacts.length > 0 && visibleContacts.length === 0 && (
+          <p style={{ padding: 12, color: '#888', fontSize: 13 }}>No contacts match "{searchQuery}".</p>
+        )}
+        {visibleContacts.map((contact) => {
           const label = contactLabel(contact);
           const lastMessage = conversations[contact.userId]?.at(-1);
           const verified = verifPhase[contact.userId] === 'verified';

@@ -42,6 +42,7 @@ export interface ChatMessage {
 const CONTACTS_KEY = 'cycove_contacts';
 const OWN_USERNAME_KEY = 'cycove_own_username';
 const READ_RECEIPTS_ENABLED_KEY = 'cycove_read_receipts_enabled';
+const NOTIFICATIONS_ENABLED_KEY = 'cycove_notifications_enabled';
 
 export function loadContacts(): Contact[] {
   const raw = sessionStorage.getItem(CONTACTS_KEY);
@@ -146,6 +147,18 @@ export function loadReadReceiptsEnabled(): boolean {
 
 export function saveReadReceiptsEnabled(enabled: boolean): void {
   sessionStorage.setItem(READ_RECEIPTS_ENABLED_KEY, String(enabled));
+}
+
+// Global opt-in for browser Notification API popups on new messages while
+// this tab is in the background — defaults to OFF, unlike read receipts,
+// since requesting notification permission is something a user should
+// explicitly ask for, not something turned on silently by default.
+export function loadNotificationsEnabled(): boolean {
+  return sessionStorage.getItem(NOTIFICATIONS_ENABLED_KEY) === 'true';
+}
+
+export function saveNotificationsEnabled(enabled: boolean): void {
+  sessionStorage.setItem(NOTIFICATIONS_ENABLED_KEY, String(enabled));
 }
 
 // Share codes — a copy-pasteable stand-in for QR-code contact adding (wireframe

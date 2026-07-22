@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Emoji } from '@matrix-org/matrix-sdk-crypto-wasm';
 import type { Contact, ChatMessage } from '../../src/lib/store';
 import type { VerifPhase } from '../ClientApp';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 import VerificationPanel from './VerificationPanel';
 import Avatar from './Avatar';
 import { contactLabel } from './Sidebar';
@@ -38,6 +39,12 @@ const STATUS_LABEL: Record<ChatMessage['status'], string> = {
 // in a whole QR library ecosystem).
 const REACTION_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
+const MENU_ITEM_STYLE = { textAlign: 'left' as const, border: 'none', background: 'transparent', padding: '6px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' as const };
+
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export default function Conversation({
   contact,
   messages,
@@ -60,9 +67,12 @@ export default function Conversation({
   const [verificationOpen, setVerificationOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [reactingToId, setReactingToId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const isTypingRef = useRef(false);
   const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEscapeKey(() => setOpenMenuId(null));
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
@@ -181,9 +191,10 @@ export default function Conversation({
                     <div style={{ wordBreak: 'break-word', fontStyle: m.deleted ? 'italic' : 'normal' }}>
                       {m.deleted ? 'This message was deleted' : m.body}
                     </div>
-                    {m.direction === 'sent' && !m.deleted && (
-                      <div style={{ fontSize: 10, opacity: m.status === 'read' ? 1 : 0.8, textAlign: 'right', marginTop: 2 }}>
-                        {STATUS_LABEL[m.status]}
+                    {!m.deleted && (
+                      <div style={{ fontSize: 10, opacity: 0.8, textAlign: m.direction === 'sent' ? 'right' : 'left', marginTop: 2 }}>
+                        {formatTime(m.timestamp)}
+                        {m.direction === 'sent' ? ` · ${STATUS_LABEL[m.status]}` : ''}
                       </div>
                     )}
                   </div>
@@ -200,48 +211,98 @@ export default function Conversation({
                   )}
 
                   {!m.deleted && (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                    // A 3-dot menu, not a row of always-visible text buttons —
+                    // the row grew to 3-5 buttons per message (Reply/React/
+                    // Forward/Delete×2) and got crowded; this is the same
+                    // Messenger-style pattern collapsed into one place. The
+                    // full-viewport transparent div is the click-outside-to-
+                    // close mechanism, same backdrop pattern the modal panels
+                    // already use, rather than a racy document click listener.
+                    <div style={{ position: 'relative', marginTop: 2 }}>
                       <button
-                        onClick={() => setReplyingTo(m)}
-                        style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
+                        onClick={() => setOpenMenuId(openMenuId === m.id ? null : m.id)}
+                        title="Message actions"
+                        style={{ fontSize: 14, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
                       >
-                        Reply
+                        ⋯
                       </button>
-                      <button
-                        onClick={() => setReactingToId(reactingToId === m.id ? null : m.id)}
-                        style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
-                      >
-                        React
-                      </button>
-                      <button
-                        onClick={() => onForward(m)}
-                        style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
-                      >
-                        Forward
-                      </button>
-                      {m.direction === 'sent' && (
+                      {openMenuId === m.id && (
                         <>
-                          <button
-                            onClick={() => onDeleteForMe(m.id)}
-                            style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
+                          <div onClick={() => setOpenMenuId(null)} style={{ position: 'fixed', inset: 0, zIndex: 5 }} />
+                          <div
+                            style={{
+                              position: 'absolute',
+                              [m.direction === 'sent' ? 'right' : 'left']: 0,
+                              top: '100%',
+                              marginTop: 2,
+                              background: 'white',
+                              border: '1px solid #ddd',
+                              borderRadius: 6,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                              zIndex: 6,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              minWidth: 150,
+                            }}
                           >
-                            Delete for me
-                          </button>
-                          <button
-                            onClick={() => onDeleteForEveryone(m.id)}
-                            style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
-                          >
-                            Delete for everyone
-                          </button>
+                            <button
+                              onClick={() => {
+                                setReplyingTo(m);
+                                setOpenMenuId(null);
+                              }}
+                              style={MENU_ITEM_STYLE}
+                            >
+                              Reply
+                            </button>
+                            <button
+                              onClick={() => {
+                                setReactingToId(m.id);
+                                setOpenMenuId(null);
+                              }}
+                              style={MENU_ITEM_STYLE}
+                            >
+                              React
+                            </button>
+                            <button
+                              onClick={() => {
+                                void navigator.clipboard.writeText(m.body);
+                                setOpenMenuId(null);
+                              }}
+                              style={MENU_ITEM_STYLE}
+                            >
+                              Copy
+                            </button>
+                            <button
+                              onClick={() => {
+                                onForward(m);
+                                setOpenMenuId(null);
+                              }}
+                              style={MENU_ITEM_STYLE}
+                            >
+                              Forward
+                            </button>
+                            <button
+                              onClick={() => {
+                                onDeleteForMe(m.id);
+                                setOpenMenuId(null);
+                              }}
+                              style={MENU_ITEM_STYLE}
+                            >
+                              Delete for me
+                            </button>
+                            {m.direction === 'sent' && (
+                              <button
+                                onClick={() => {
+                                  onDeleteForEveryone(m.id);
+                                  setOpenMenuId(null);
+                                }}
+                                style={MENU_ITEM_STYLE}
+                              >
+                                Delete for everyone
+                              </button>
+                            )}
+                          </div>
                         </>
-                      )}
-                      {m.direction === 'received' && (
-                        <button
-                          onClick={() => onDeleteForMe(m.id)}
-                          style={{ fontSize: 10, border: 'none', background: 'transparent', color: '#999', cursor: 'pointer', padding: 0 }}
-                        >
-                          Delete for me
-                        </button>
                       )}
                     </div>
                   )}

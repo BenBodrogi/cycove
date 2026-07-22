@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { decodeShareCode } from '../../src/lib/store';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 
 interface ResolvedPeer {
   userId: string;
@@ -36,6 +37,8 @@ export default function AddContactPanel({
 
   const [claimStatus, setClaimStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [claimError, setClaimError] = useState<string | null>(null);
+
+  useEscapeKey(onClose);
 
   async function handleClaimUsername() {
     setClaimStatus('saving');

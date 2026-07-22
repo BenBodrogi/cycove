@@ -1,6 +1,7 @@
 'use client';
 
 import type { Contact } from '../../src/lib/store';
+import { useEscapeKey } from '../../src/lib/useEscapeKey';
 import { contactLabel } from './Sidebar';
 import Avatar from './Avatar';
 
@@ -15,6 +16,8 @@ interface ForwardMessagePanelProps {
 // canMessage gate, since forwarding is just composing a new message under
 // the hood (sendMessage), which already requires that.
 export default function ForwardMessagePanel({ contacts, onForward, onClose }: ForwardMessagePanelProps) {
+  useEscapeKey(onClose);
+
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
