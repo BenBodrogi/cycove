@@ -80,6 +80,9 @@ The server is explicitly outside the trust boundary for content — it is truste
 - **Exposure:** a leaked FCM token could be used to trigger wake-signals at a target device (battery drain, minor DoS-style annoyance).
 - **Mitigation:** push payload is opaque (no content, no identifiers) by design, so the worst case is a nuisance wake-up, not a data leak. Rate-limiting push triggers server-side is worth adding to the abuse-prevention backlog (see `Projects/CyCove.md` → Architecture → Backend open questions).
 
+### Browser Notification API popups (added 2026-07-21) — a narrower exposure than FCM, deliberately not held to the identical "fully opaque" bar
+- The web client's own (not FCM's) new-message notifications show the contact's label, never the message body. This is intentionally *not* as strict as FCM's "no identifiers" rule above — that rule exists because FCM payloads transit Google's push infrastructure, a third party this app has no reason to hand data to. A browser `Notification` triggered from the already-authenticated tab has no such third-party hop; the constraint that still applies is "never leak plaintext content into a channel this app doesn't control" (an OS notification center, unlike this app's own IndexedDB, may be logged or synced elsewhere by the OS), which is why the body specifically stays out. Off by default; only ever requests browser permission in direct response to the user turning the toggle on, never on page load unprompted.
+
 ## Out of scope (explicitly, so it's a decision and not an oversight)
 - Defending against a legitimate contact who leaks what they received (screenshots, forwarding) — no E2EE system solves this.
 - Traffic-analysis resistance against a global passive adversary (no onion routing / mixnet). EU hosting mitigates *legal* compulsion exposure, not *technical* traffic-analysis capability — worth being honest about this distinction in any public-facing security claims.

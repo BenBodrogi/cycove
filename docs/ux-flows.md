@@ -95,6 +95,18 @@ The trigger was Ben hitting the literal problem this section describes: close th
 
 **Also fixed in the same pass, found while designing delete-for-everyone's own-device consistency:** messages sent from one already-linked device now live-echo to your other already-linked devices, not just to the recipient. Previously, two of your own devices open at the same time genuinely wouldn't show each other's sends — only a *newly linked* device caught up, via the one-time bulk history-sync. See `docs/crypto-integration-notes.md`'s "Chat quick-wins" section for the mechanism.
 
+## More quick wins: message menu, timestamps, contact search, notifications, Escape-to-close
+
+**Built and live-tested 2026-07-21, later the same day.** Ben flagged the Log out button was unreachable (see the fix note below) and asked for 5 more small usability additions, plus said the per-message action row from the entry above was getting crowded.
+
+- **Message actions collapsed into a "⋯" menu**, Messenger-style, replacing the row of 3-5 always-visible text buttons — same actions as before (Reply/React/Forward/Delete) plus a new **Copy** action. Opens as a small dropdown anchored to the button; a full-viewport transparent backdrop closes it on an outside click (same pattern the modal panels already use for their own backdrop-click-to-close, rather than a racy document-level click listener), and Escape closes it too.
+- **Message timestamps** — bubbles now show a small time (e.g. "10:27") alongside the existing delivery-status ticks, not just status with no time at all.
+- **Contact search** (`Sidebar.tsx`): a text input filtering the contact list by label, purely client-side.
+- **Browser notifications**: a new Sidebar toggle (off by default — unlike read receipts, requesting notification permission is something a user should explicitly opt into, not something defaulted on). Only fires when the tab is in the background (`document.hidden`); shows the contact's label, never the message body — see `THREAT_MODEL.md`'s new entry on why that's a narrower bar than FCM's fully-opaque payload, not the same one. Clicking a notification focuses the tab.
+- **Escape-to-close on every modal panel** (`AddContactPanel`, `EditContactPanel`, `LinkDevicePanel`, `DevicesPanel`, `ForwardMessagePanel`) via a new shared `useEscapeKey` hook — they already closed on backdrop click, this adds the other standard dismiss path.
+
+**Also fixed, reported live:** the Sidebar's header button row (Add/Link device/Your devices/Read receipts/Log out) overflowed its fixed 280px width with no wrapping, pushing the last button — Log out — off-screen and unclickable. Fixed with `flexWrap`. Verified by checking `document.elementFromPoint()` at the button's actual screen position matched the button itself before *and* after the fix, then actually clicking it. App also now labeled **OPEN ALPHA** in the tab title and on the pre-auth screen, both explicitly requested.
+
 ## Related
 - `Projects/CyCove.md` (Identity model, Architecture)
 - `THREAT_MODEL.md` (MITM at first contact, recovery key theft/loss)
